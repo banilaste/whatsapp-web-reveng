@@ -69,3 +69,7 @@ doc/spec/protobuf-extractor/node_modules
 .iml
 # direnv environment
 .envrc
+
+# Generated files
+*.css
+*.css.map
