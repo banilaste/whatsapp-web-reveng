@@ -1,0 +1,29 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from whatsapp import WhatsAppWebClient
+
+
+def onOpen():
+	global client
+	print("connection opened")
+	client.generateQRCode(onQRCode)
+
+def onMessage(data, descriptor):
+	print("message received")
+	print(data)
+	print(descriptor)
+
+def onClose():
+	print("connection closed")
+
+def onQRCode(a, b):
+	print("qr code obtained :")
+	print(a)
+	print(b)
+	
+client = WhatsAppWebClient(onOpen, onMessage, onClose)
+client.connect()
+
+while True:
+	pass

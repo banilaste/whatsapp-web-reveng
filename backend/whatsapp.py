@@ -29,10 +29,6 @@ from whatsapp_binary_reader import whatsappReadBinary
 
 WHATSAPP_WEB_VERSION="0,4,2081"
 
-reload(sys)
-sys.setdefaultencoding("utf-8")
-
-
 def HmacSha256(key, sign):
     return hmac.new(key, sign, hashlib.sha256).digest()
 
@@ -117,8 +113,8 @@ class WhatsAppWebClient:
     def onOpen(self, ws):
         try:
             self.websocketIsOpened = True
-            if self.onOpenCallback is not None and "func" in self.onOpenCallback:
-                self.onOpenCallback["func"](self.onOpenCallback)
+            if self.onOpenCallback is not None:
+                self.onOpenCallback()
             eprint("WhatsApp backend Websocket opened.")
         except:
             eprint(traceback.format_exc())
@@ -128,40 +124,41 @@ class WhatsAppWebClient:
 
     def onClose(self, ws):
         self.websocketIsOpened = False
-        if self.onCloseCallback is not None and "func" in self.onCloseCallback:
-            self.onCloseCallback["func"](self.onCloseCallback)
+        if self.onCloseCallback is not None:
+            self.onCloseCallback()
         eprint("WhatsApp backend Websocket closed.")
 
     def onMessage(self, ws, message):
+        """
+            Handle incoming whatsapp message
+        """
         try:
             messageSplit = message.split(",", 1)
             messageTag = messageSplit[0]
             messageContent = messageSplit[1]
             
-            if messageTag in self.messageQueue:											# when the server responds to a client's message
+            if messageTag in self.messageQueue:	# when the server responds to a client's message
                 pend = self.messageQueue[messageTag]
                 if pend["desc"] == "_status":
                     if messageContent[0] == 'Pong' and messageContent[1] == True:
                         pend["callback"]({"Connected": True,"user":self.connInfo["me"],"pushname":self.connInfo["pushname"]})
-                elif pend["desc"] == "_restoresession":
-                    eprint("")  # TODO implement Challenge Solving
                 elif pend["desc"] == "_login":
                     eprint("Message after login: ", message)
                     self.loginInfo["serverRef"] = json.loads(messageContent)["ref"]
                     eprint("set server id: " + self.loginInfo["serverRef"])
                     self.loginInfo["privateKey"] = curve25519.Private()
                     self.loginInfo["publicKey"] = self.loginInfo["privateKey"].get_public()
-                    qrCodeContents = self.loginInfo["serverRef"] + "," + base64.b64encode(self.loginInfo["publicKey"].serialize()) + "," + self.loginInfo["clientId"]
+                    qrCodeContents = self.loginInfo["serverRef"] + "," + str(base64.b64encode(self.loginInfo["publicKey"].serialize())) + "," + self.loginInfo["clientId"]
                     eprint("qr code contents: " + qrCodeContents)
 
                     svgBuffer = io.BytesIO()											# from https://github.com/mnooner256/pyqrcode/issues/39#issuecomment-207621532
                     pyqrcode.create(qrCodeContents, error='L').svg(svgBuffer, scale=6, background="rgba(0,0,0,0.0)", module_color="#122E31", quiet_zone=0)
-                    if "callback" in pend and pend["callback"] is not None and "func" in pend["callback"] and pend["callback"]["func"] is not None and "tag" in pend["callback"] and pend["callback"]["tag"] is not None:
-                        pend["callback"]["func"]({ "type": "generated_qr_code", "image": "data:image/svg+xml;base64," + base64.b64encode(svgBuffer.getvalue()), "content": qrCodeContents }, pend["callback"])
+                    if "callback" in pend and pend["callback"] is not None:
+                        pend["callback"]({ "type": "generated_qr_code", "image": "data:image/svg+xml;base64," + str(base64.b64encode(svgBuffer.getvalue())), "content": qrCodeContents })
             else:
                 try:
                     jsonObj = json.loads(messageContent)								# try reading as json
-                except ValueError, e:
+                except ValueError:
                     if messageContent != "":
                         hmacValidation = HmacSha256(self.loginInfo["key"]["macKey"], messageContent[32:])
                         if hmacValidation != messageContent[:32]:
@@ -175,9 +172,9 @@ class WhatsAppWebClient:
                             processedData = { "traceback": traceback.format_exc().splitlines() }
                             messageType = "error"
                         finally:
-                            self.onMessageCallback["func"](processedData, self.onMessageCallback, { "message_type": messageType })
+                            self.onMessageCallback(processedData, { "message_type": messageType })
                 else:
-                    self.onMessageCallback["func"](jsonObj, self.onMessageCallback, { "message_type": "json" })
+                    self.onMessageCallback(jsonObj, { "message_type": "json" })
                     if isinstance(jsonObj, list) and len(jsonObj) > 0:					# check if the result is an array
                         eprint(json.dumps(jsonObj))
                         if jsonObj[0] == "Conn":
@@ -219,6 +216,9 @@ class WhatsAppWebClient:
 
 
     def connect(self):
+        """
+            Connect to whatsapp
+        """
         self.activeWs = websocket.WebSocketApp("wss://web.whatsapp.com/ws",
                                                on_message = lambda ws, message: self.onMessage(ws, message),
                                                on_error = lambda ws, error: self.onError(ws, error),
@@ -231,7 +231,10 @@ class WhatsAppWebClient:
         self.websocketThread.start()
 
     def generateQRCode(self, callback=None):
-        self.loginInfo["clientId"] = base64.b64encode(os.urandom(16))
+        """
+            Generate the QR code for authentication
+        """
+        self.loginInfo["clientId"] = str(base64.b64encode(os.urandom(16)))
         messageTag = str(getTimestamp())
         self.messageQueue[messageTag] = { "desc": "_login", "callback": callback }
         message = messageTag + ',["admin","init",['+ WHATSAPP_WEB_VERSION + '],["Chromium at ' + datetime.datetime.now().isoformat() + '","Chromium"],"' + self.loginInfo["clientId"] + '",true]'
@@ -248,25 +251,54 @@ class WhatsAppWebClient:
             "serverToken"] + '", "' + self.loginInfo["clientId"] + '", "takeover"]'
 
         self.activeWs.send(message)
-        
-    def getLoginInfo(self, callback):
-        callback["func"]({ "type": "login_info", "data": self.loginInfo }, callback)
-    
-    def getConnectionInfo(self, callback):
-        callback["func"]({ "type": "connection_info", "data": self.connInfo }, callback)
     
     def sendTextMessage(self, number, text):
+        """
+            Sends a texte message to the remote number
+        """
+        # Generate message ID and message tag
         messageId = "3EB0"+binascii.hexlify(Random.get_random_bytes(8)).upper()
         messageTag = str(getTimestamp())
-        messageParams = {"key": {"fromMe": True, "remoteJid": number + "@s.whatsapp.net", "id": messageId},"messageTimestamp": getTimestamp(), "status": 1, "message": {"conversation": text}}
-        msgData = ["action", {"type": "relay", "epoch": str(self.messageSentCount)},[["message", None, WAWebMessageInfo.encode(messageParams)]]]
+
+        # Build message params
+        messageParams = {
+            "key": {
+                "fromMe": True,
+                "remoteJid": number + "@s.whatsapp.net",
+                "id": messageId
+            },
+            "messageTimestamp": getTimestamp(),
+            "status": 1,
+            "message": {"conversation": text}
+        }
+
+        # Prepare message
+        msgData = [
+            "action",
+            {
+                "type": "relay",
+                "epoch": str(self.messageSentCount)
+            },
+            [
+                ["message", None, WAWebMessageInfo.encode(messageParams)]
+            ]
+        ]
+
+        # Crypt the message and convert to binary
         encryptedMessage = WhatsAppEncrypt(self.loginInfo["key"]["encKey"], self.loginInfo["key"]["macKey"],whatsappWriteBinary(msgData))
         payload = bytearray(messageId) + bytearray(",") + bytearray(to_bytes(WAMetrics.MESSAGE, 1)) + bytearray([0x80]) + encryptedMessage
+
+        # Store message id
         self.messageSentCount = self.messageSentCount + 1
         self.messageQueue[messageId] = {"desc": "__sending"}
+
+        # Send it
         self.activeWs.send(payload, websocket.ABNF.OPCODE_BINARY)
         
     def status(self, callback=None):
+        """
+            Test whatsapp connection
+        """
         if self.activeWs is not None:
             messageTag = str(getTimestamp())
             self.messageQueue[messageTag] = {"desc": "_status", "callback": callback}
@@ -274,6 +306,5 @@ class WhatsAppWebClient:
             self.activeWs.send(message)
 
     def disconnect(self):
-        self.activeWs.send('goodbye,,["admin","Conn","disconnect"]')		# WhatsApp server closes connection automatically when client wants to disconnect
-        #time.sleep(0.5)
-        #self.activeWs.close()
+        # WhatsApp server closes connection automatically when client wants to disconnect
+        self.activeWs.send('goodbye,,["admin","Conn","disconnect"]')
