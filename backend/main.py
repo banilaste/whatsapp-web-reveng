@@ -17,10 +17,9 @@ def onMessage(data, descriptor):
 def onClose():
 	print("connection closed")
 
-def onQRCode(a, b):
+def onQRCode(a):
 	print("qr code obtained :")
 	print(a)
-	print(b)
 	
 client = WhatsAppWebClient(onOpen, onMessage, onClose)
 client.connect()
