@@ -148,7 +148,10 @@ class WAWebMessageInfo:
     @staticmethod
     def decode(data):
         msg = whatsapp_protobuf_pb2.WebMessageInfo()
-        msg.ParseFromString(data)
+        try:
+            msg.ParseFromString(data)
+        except:
+            return data
         return json.loads(json_format.MessageToJson(msg))
 
     @staticmethod

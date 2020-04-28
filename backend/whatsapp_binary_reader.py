@@ -193,7 +193,7 @@ def whatsappReadMessageArray(msgs):
         return msgs
     ret = []
     for x in msgs:
-        ret.append(WAWebMessageInfo.decode(x[2]) if isinstance(x, list) and x[0]=="message" else x)
+        ret.append(WAWebMessageInfo.decode(bytes(x[2], encoding='utf8')) if isinstance(x, list) and x[0]=="message" else x)
     return ret
 
 def whatsappReadBinary(data, withMessages=False):

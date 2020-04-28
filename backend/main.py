@@ -24,5 +24,4 @@ def onQRCode(a):
 client = WhatsAppWebClient(onOpen, onMessage, onClose)
 client.connect()
 
-while True:
-	pass
+input()

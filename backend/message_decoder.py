@@ -3,6 +3,7 @@ import base64
 from whatsapp_binary_reader import whatsappReadBinary
 import hmac
 import hashlib
+import traceback
 
 key = base64.b64decode(input("private key [JSON.parse(window.localStorage.WASecretBundle).encKey] :"))
 #macKey = base64.b64decode(input("private key [JSON.parse(window.localStorage.WASecretBundle).macKey] :")
@@ -20,7 +21,9 @@ def AESDecrypt(key, ciphertext):						# from https://stackoverflow.com/a/2086826
     return plaintext.rstrip(b"\0")
 
 while True:
-	message = base64.b64decode(input("message : "))
+	input("write binary message as hex into ../data.hex then press enter ")
+	with open("../data.hex") as it:
+		message = bytes.fromhex(it.read())
 	message = message[message.index(b',')+1:]
     
 	#hmacValidation = HmacSha256(macKey, message[32:])
@@ -36,5 +39,6 @@ while True:
 
 		print(processedData)
 	except Exception as e:
-		print(e)
+           track = traceback.format_exc()
+           print(track)
 		
