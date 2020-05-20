@@ -9,23 +9,23 @@ key = base64.b64decode(input("private key [JSON.parse(window.localStorage.WASecr
 #macKey = base64.b64decode(input("private key [JSON.parse(window.localStorage.WASecretBundle).macKey] :")
 
 def HmacSha256(key, sign):
-    return hmac.new(key, sign, hashlib.sha256).digest()
+	return hmac.new(key, sign, hashlib.sha256).digest()
 
 def pad(s):
-    return s + b"\0" * (AES.block_size - len(s) % AES.block_size)
+	return s + b"\0" * (AES.block_size - len(s) % AES.block_size)
 
 def AESDecrypt(key, ciphertext):						# from https://stackoverflow.com/a/20868265
-    iv = ciphertext[:AES.block_size]
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    plaintext = cipher.decrypt(ciphertext[AES.block_size:])
-    return plaintext.rstrip(b"\0")
+	iv = ciphertext[:AES.block_size]
+	cipher = AES.new(key, AES.MODE_CBC, iv)
+	plaintext = cipher.decrypt(ciphertext[AES.block_size:])
+	return plaintext.rstrip(b"\0")
 
 while True:
 	input("write binary message as hex into ../data.hex then press enter ")
 	with open("../data.hex") as it:
 		message = bytes.fromhex(it.read())
 	message = message[message.index(b',')+1:]
-    
+	
 	#hmacValidation = HmacSha256(macKey, message[32:])
 	#if hmacValidation != message[:32]:
 	#	raise ValueError("Hmac mismatch")
@@ -37,8 +37,8 @@ while True:
 			file.write(str(processedData))
 			file.write("\n\n")
 
-		print(processedData)
+		#print(processedData)
 	except Exception as e:
-           track = traceback.format_exc()
-           print(track)
+		track = traceback.format_exc()
+		print(track)
 		

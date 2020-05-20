@@ -1,7 +1,7 @@
 from google.protobuf import json_format
 import json
 import whatsapp_protobuf_pb2
-
+import traceback
 
 
 class WATags:
@@ -143,7 +143,6 @@ class WAMediaAppInfo:
         return WAMediaAppInfo.__dict__[str]
 
 
-
 class WAWebMessageInfo:
     @staticmethod
     def decode(data):
@@ -151,7 +150,17 @@ class WAWebMessageInfo:
         try:
             msg.ParseFromString(data)
         except:
-            return data
+            try:
+                input(data)
+                truncated = data[data.index(b'\xa0'):]
+                input(truncated)
+                truncated = truncated[truncated.index(b'\x01')+1:]
+                input(truncated)
+                truncated = truncated[:truncated.index(b'\x18')]
+                input(truncated)
+                return truncated.decode("utf-8")
+            except:
+                return data
         return json.loads(json_format.MessageToJson(msg))
 
     @staticmethod
