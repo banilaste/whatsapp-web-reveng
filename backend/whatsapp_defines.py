@@ -146,21 +146,20 @@ class WAMediaAppInfo:
 class WAWebMessageInfo:
     @staticmethod
     def decode(data):
+        unescaped = []
+        mark = False
+        for char in data:
+            if char == 195:
+                mark = True
+            elif char != 194:
+                if mark:
+                    unescaped.append(char | 0b0100_0000)
+                    mark = False
+                else:
+                    unescaped.append(char)
+
         msg = whatsapp_protobuf_pb2.WebMessageInfo()
-        try:
-            msg.ParseFromString(data)
-        except:
-            try:
-                input(data)
-                truncated = data[data.index(b'\xa0'):]
-                input(truncated)
-                truncated = truncated[truncated.index(b'\x01')+1:]
-                input(truncated)
-                truncated = truncated[:truncated.index(b'\x18')]
-                input(truncated)
-                return truncated.decode("utf-8")
-            except:
-                return data
+        msg.ParseFromString(bytes(unescaped))
         return json.loads(json_format.MessageToJson(msg))
 
     @staticmethod
