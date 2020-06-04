@@ -7,6 +7,8 @@ import traceback
 class WATags:
     LIST_EMPTY      = 0
     STREAM_END      = 2
+    ESCAPE          = 194
+    ESCAPE_ALTER    = 195
     DICTIONARY_0    = 236
     DICTIONARY_1    = 237
     DICTIONARY_2    = 238
@@ -149,9 +151,9 @@ class WAWebMessageInfo:
         unescaped = []
         mark = False
         for char in data:
-            if char == 195:
+            if char == WATags.ESCAPE_ALTER:
                 mark = True
-            elif char != 194:
+            elif char != WATags.ESCAPE:
                 if mark:
                     unescaped.append(char | 0b0100_0000)
                     mark = False

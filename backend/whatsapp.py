@@ -32,13 +32,13 @@ WHATSAPP_WEB_VERSION="0,4,2081"
 def HmacSha256(key, sign):
     return hmac.new(key, sign, hashlib.sha256).digest()
 
-def HKDF(key, length, appInfo=""):						# implements RFC 5869, some parts from https://github.com/MirkoDziadzka/pyhkdf
-    key = HmacSha256("\0"*32, key)
-    keyStream = ""
-    keyBlock = ""
+def HKDF(key, length, appInfo=b""):						# implements RFC 5869, some parts from https://github.com/MirkoDziadzka/pyhkdf
+    key = HmacSha256(b"\0"*32, key)
+    keyStream = b""
+    keyBlock = b""
     blockIndex = 1
     while len(keyStream) < length:
-        keyBlock = hmac.new(key, msg=keyBlock+appInfo+chr(blockIndex), digestmod=hashlib.sha256).digest()
+        keyBlock = hmac.new(key, msg=keyBlock+appInfo+bytes([blockIndex]), digestmod=hashlib.sha256).digest()
         blockIndex += 1
         keyStream += keyBlock
     return keyStream[:length]
@@ -132,88 +132,93 @@ class WhatsAppWebClient:
         """
             Handle incoming whatsapp message
         """
-        try:
+        messageType = "json"
+        processedData = []
+
+        if message[0] == "!" or message[0] == b"!": # keep alive answer
+            return
+
+        # Parse and decode message
+        if type(message) == bytes:
+            messageSplit = message.split(b",", 1)
+            messageTag = messageSplit[0]
+            messageContent = messageSplit[1]
+
+            if messageContent != "":
+                hmacValidation = HmacSha256(self.loginInfo["key"]["macKey"], messageContent[32:])
+                if hmacValidation != messageContent[:32]:
+                    raise ValueError("Hmac mismatch")
+                
+                decryptedMessage = AESDecrypt(self.loginInfo["key"]["encKey"], messageContent[32:])
+                try:
+                    processedData = whatsappReadBinary(decryptedMessage, True)
+                    messageType = "binary"
+                except:
+                    processedData = { "traceback": traceback.format_exc().splitlines() }
+                    messageType = "error"                    
+        else:
             messageSplit = message.split(",", 1)
             messageTag = messageSplit[0]
             messageContent = messageSplit[1]
-            
-            if messageTag in self.messageQueue:	# when the server responds to a client's message
-                pend = self.messageQueue[messageTag]
-                if pend["desc"] == "_status":
-                    if messageContent[0] == 'Pong' and messageContent[1] == True:
-                        pend["callback"]({"Connected": True,"user":self.connInfo["me"],"pushname":self.connInfo["pushname"]})
-                elif pend["desc"] == "_login":
-                    eprint("Message after login: ", message)
-                    self.loginInfo["serverRef"] = json.loads(messageContent)["ref"]
-                    eprint("set server id: " + self.loginInfo["serverRef"])
-                    self.loginInfo["privateKey"] = curve25519.Private()
-                    self.loginInfo["publicKey"] = self.loginInfo["privateKey"].get_public()
-                    qrCodeContents = self.loginInfo["serverRef"] + "," + str(base64.b64encode(self.loginInfo["publicKey"].serialize())) + "," + self.loginInfo["clientId"]
-                    eprint("qr code contents: " + qrCodeContents)
+            processedData = json.loads(messageContent)
+        
+        if messageTag in self.messageQueue: # when the server responds to a client's message
+            pend = self.messageQueue[messageTag]
+            if pend["desc"] == "_status":
+                if messageContent[0] == 'Pong' and messageContent[1] == True:
+                    pend["callback"]({"Connected": True,"user":self.connInfo["me"],"pushname":self.connInfo["pushname"]})
+            elif pend["desc"] == "_login":
+                eprint("Message after login: ", message)
+                self.loginInfo["serverRef"] = json.loads(messageContent)["ref"]
+                eprint("set server id: " + self.loginInfo["serverRef"])
+                self.loginInfo["privateKey"] = curve25519.Private()
+                self.loginInfo["publicKey"] = self.loginInfo["privateKey"].get_public()
+                qrCodeContents = self.loginInfo["serverRef"] + "," + base64.b64encode(self.loginInfo["publicKey"].serialize()).decode("utf-8") + "," + self.loginInfo["clientId"]
+                eprint("qr code contents: " + qrCodeContents)
 
-                    svgBuffer = io.BytesIO()											# from https://github.com/mnooner256/pyqrcode/issues/39#issuecomment-207621532
-                    pyqrcode.create(qrCodeContents, error='L').svg(svgBuffer, scale=6, background="rgba(0,0,0,0.0)", module_color="#122E31", quiet_zone=0)
-                    if "callback" in pend and pend["callback"] is not None:
-                        pend["callback"]({ "type": "generated_qr_code", "image": "data:image/svg+xml;base64," + str(base64.b64encode(svgBuffer.getvalue())), "content": qrCodeContents })
+                svgBuffer = io.BytesIO()											# from https://github.com/mnooner256/pyqrcode/issues/39#issuecomment-207621532
+                pyqrcode.create(qrCodeContents, error='L').svg(svgBuffer, scale=6, background="rgba(0,0,0,0.0)", module_color="#122E31", quiet_zone=0)
+                if "callback" in pend and pend["callback"] is not None:
+                    pend["callback"]({ "type": "generated_qr_code", "image": "data:image/svg+xml;base64," + base64.b64encode(svgBuffer.getvalue()).decode("utf-8"), "content": qrCodeContents })
+            elif pend["desc"] == "_query":
+                pend.callback(processedData[1], processedData[2])
             else:
-                try:
-                    jsonObj = json.loads(messageContent)								# try reading as json
-                except ValueError:
-                    print("oulalalalalal")
-                    print(messageContent)
-                    if messageContent != "":
-                        hmacValidation = HmacSha256(self.loginInfo["key"]["macKey"], messageContent[32:])
-                        if hmacValidation != messageContent[:32]:
-                            raise ValueError("Hmac mismatch")
-                        
-                        decryptedMessage = AESDecrypt(self.loginInfo["key"]["encKey"], messageContent[32:])
-                        try:
-                            processedData = whatsappReadBinary(decryptedMessage, True)
-                            messageType = "binary"
-                        except:
-                            processedData = { "traceback": traceback.format_exc().splitlines() }
-                            messageType = "error"
-                        finally:
-                            self.onMessageCallback(processedData, { "message_type": messageType })
+                print("unhandled response :", messageContent)
+        else:
+            if isinstance(processedData, list) and len(processedData) >= 2:					# check if the result is an array
+                if processedData[0] == "Conn":
+                    Timer(25, lambda: self.activeWs.send('?,,')).start() # Keepalive Request
+                    self.connInfo["clientToken"] = processedData[1]["clientToken"]
+                    self.connInfo["serverToken"] = processedData[1]["serverToken"]
+                    self.connInfo["browserToken"] = processedData[1]["browserToken"]
+                    self.connInfo["me"] = processedData[1]["wid"]
+                    
+                    self.connInfo["secret"] = base64.b64decode(processedData[1]["secret"])
+                    self.connInfo["sharedSecret"] = self.loginInfo["privateKey"].get_shared_key(curve25519.Public(self.connInfo["secret"][:32]), lambda a: a)
+                    sse = self.connInfo["sharedSecretExpanded"] = HKDF(self.connInfo["sharedSecret"], 80)
+                    hmacValidation = HmacSha256(sse[32:64], self.connInfo["secret"][:32] + self.connInfo["secret"][64:])
+                    if hmacValidation != self.connInfo["secret"][32:64]:
+                        raise ValueError("Hmac mismatch")
+
+                    keysEncrypted = sse[64:] + self.connInfo["secret"][64:]
+                    keysDecrypted = AESDecrypt(sse[:32], keysEncrypted)
+                    self.loginInfo["key"]["encKey"] = keysDecrypted[:32]
+                    self.loginInfo["key"]["macKey"] = keysDecrypted[32:64]
+                    
+                    # eprint("private key            : ", base64.b64encode(self.loginInfo["privateKey"].serialize()))
+                    # eprint("secret                 : ", base64.b64encode(self.connInfo["secret"]))
+                    # eprint("shared secret          : ", base64.b64encode(self.connInfo["sharedSecret"]))
+                    # eprint("shared secret expanded : ", base64.b64encode(self.connInfo["sharedSecretExpanded"]))
+                    # eprint("hmac validation        : ", base64.b64encode(hmacValidation))
+                    # eprint("keys encrypted         : ", base64.b64encode(keysEncrypted))
+                    # eprint("keys decrypted         : ", base64.b64encode(keysDecrypted))
+
+                    eprint("set connection info: client, server and browser token secret, shared secret, enc key, mac key")
+                    eprint("logged in as " + processedData[1]["pushname"]  + " (" + processedData[1]["wid"] + ")")
+                elif processedData[0] == "Stream" or processedData[0] == "Props" or processedData[0] == "Blocklist":
+                    pass
                 else:
-                    self.onMessageCallback(jsonObj, { "message_type": "json" })
-                    if isinstance(jsonObj, list) and len(jsonObj) > 0:					# check if the result is an array
-                        eprint(json.dumps(jsonObj))
-                        if jsonObj[0] == "Conn":
-                            Timer(25, lambda: self.activeWs.send('?,,')).start() # Keepalive Request
-                            self.connInfo["clientToken"] = jsonObj[1]["clientToken"]
-                            self.connInfo["serverToken"] = jsonObj[1]["serverToken"]
-                            self.connInfo["browserToken"] = jsonObj[1]["browserToken"]
-                            self.connInfo["me"] = jsonObj[1]["wid"]
-                            
-                            self.connInfo["secret"] = base64.b64decode(jsonObj[1]["secret"])
-                            self.connInfo["sharedSecret"] = self.loginInfo["privateKey"].get_shared_key(curve25519.Public(self.connInfo["secret"][:32]), lambda a: a)
-                            sse = self.connInfo["sharedSecretExpanded"] = HKDF(self.connInfo["sharedSecret"], 80)
-                            hmacValidation = HmacSha256(sse[32:64], self.connInfo["secret"][:32] + self.connInfo["secret"][64:])
-                            if hmacValidation != self.connInfo["secret"][32:64]:
-                                raise ValueError("Hmac mismatch")
-
-                            keysEncrypted = sse[64:] + self.connInfo["secret"][64:]
-                            keysDecrypted = AESDecrypt(sse[:32], keysEncrypted)
-                            self.loginInfo["key"]["encKey"] = keysDecrypted[:32]
-                            self.loginInfo["key"]["macKey"] = keysDecrypted[32:64]
-                            
-                            # eprint("private key            : ", base64.b64encode(self.loginInfo["privateKey"].serialize()))
-                            # eprint("secret                 : ", base64.b64encode(self.connInfo["secret"]))
-                            # eprint("shared secret          : ", base64.b64encode(self.connInfo["sharedSecret"]))
-                            # eprint("shared secret expanded : ", base64.b64encode(self.connInfo["sharedSecretExpanded"]))
-                            # eprint("hmac validation        : ", base64.b64encode(hmacValidation))
-                            # eprint("keys encrypted         : ", base64.b64encode(keysEncrypted))
-                            # eprint("keys decrypted         : ", base64.b64encode(keysDecrypted))
-
-                            eprint("set connection info: client, server and browser token secret, shared secret, enc key, mac key")
-                            eprint("logged in as " + jsonObj[1]["pushname"]  + " (" + jsonObj[1]["wid"] + ")")
-                        elif jsonObj[0] == "Stream":
-                            pass
-                        elif jsonObj[0] == "Props":
-                            pass
-        except:
-            eprint(traceback.format_exc())
+                    self.onMessageCallback(processedData, { "message_type": messageType })
 
 
 
@@ -236,7 +241,7 @@ class WhatsAppWebClient:
         """
             Generate the QR code for authentication
         """
-        self.loginInfo["clientId"] = str(base64.b64encode(os.urandom(16)))
+        self.loginInfo["clientId"] = base64.b64encode(os.urandom(16)).decode("utf-8")
         messageTag = str(getTimestamp())
         self.messageQueue[messageTag] = { "desc": "_login", "callback": callback }
         message = messageTag + ',["admin","init",['+ WHATSAPP_WEB_VERSION + '],["Chromium at ' + datetime.datetime.now().isoformat() + '","Chromium"],"' + self.loginInfo["clientId"] + '",true]'
@@ -256,7 +261,7 @@ class WhatsAppWebClient:
     
     def sendTextMessage(self, number, text):
         """
-            Sends a texte message to the remote number
+            Sends a text message to the remote number
         """
         # Generate message ID and message tag
         messageId = "3EB0"+binascii.hexlify(Random.get_random_bytes(8)).upper()
@@ -296,7 +301,55 @@ class WhatsAppWebClient:
 
         # Send it
         self.activeWs.send(payload, websocket.ABNF.OPCODE_BINARY)
-        
+    
+    def sendAnyMessage(self, type, description, payload=None, binary=True):
+        """
+            Send a generic message to the whatsapp server, not to be confused with a user message.
+
+            Returns the message id for query result matching pupose
+
+            Arguments
+            - type : "action", "admin" or "query" (maybe more, "response" type is issued by server)
+            - description : { type: "message_type", ...additional data }, __message_type__ may be any supported one ("chat", "contacts", "status", "emoji", "message" with query, "set" with action and more), note that "epoch" is added automatically
+            - payload : None or data to send to the server
+
+            Example : request for more messages
+            sendAnyMessage("query", {"type": "message", "kind": "before", jid: "<user id>", count: 50, index: "<message index>", owner: false, epoch: "5" }, None)
+        """
+
+        # Generate message tag
+        messageTag = str(getTimestamp())
+
+        if description is not None:
+            description["epoch"] = str(self.messageSentCount)
+            self.messageSentCount = self.messageSentCount + 1
+
+        # Prepare message
+        msgData = [ type, description, payload ]
+
+
+        if binary:
+            # Crypt the message and convert to binary
+            encryptedMessage = WhatsAppEncrypt(self.loginInfo["key"]["encKey"], self.loginInfo["key"]["macKey"], whatsappWriteBinary(msgData))
+            payload = bytearray(messageTag) + bytearray(",") + bytearray(to_bytes(WAMetrics.MESSAGE, 1)) + bytearray([0x80]) + encryptedMessage
+
+            # Send it
+            self.activeWs.send(payload, websocket.ABNF.OPCODE_BINARY)
+        else:
+            payload = messageTag + "," + json.dumps(msgData)
+            
+            # Send it
+            self.activeWs.send(payload)
+
+        return messageTag
+
+    def sendAnyRequest(self, callback, type = "query", description=None, payload=None, binary=True):
+        """
+            Same as *sendAnyMessage* but subscribe to the answer with a callback
+        """
+        tag = self.sendAnyMessage(type, description, payload, binary)
+        self.messageQueue[tag] = {"desc": "_request", "callback": callback}
+
     def status(self, callback=None):
         """
             Test whatsapp connection
